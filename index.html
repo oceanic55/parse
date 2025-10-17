@@ -1,0 +1,1441 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Din Paper Checker</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="styles.css">
+</head>
+
+<body>
+    <header>
+        <div class="logo"><img src="svg/beer.svg" alt="Beer Icon" style="vertical-align: middle; margin-right: 6px;" />
+            Dingo Paper Checker</div>
+        <nav class="nav-links">
+            <a href="#" id="summary-btn" class="active">Summary</a>
+            <a href="#" id="concept-btn">Concept</a>
+            <a href="#" id="questions-btn">Questions</a>
+            <a href="#" id="visualmap-btn">Visual Map</a>
+            <a href="#" id="prompts-btn">Prompts</a>
+        </nav>
+        <div class="header-actions">
+            <button class="btn btn-primary" id="submit-btn">Load</button>
+            <button class="btn" id="copy-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24"
+                    style="vertical-align: middle;">
+                    <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"
+                        stroke-width="1.5">
+                        <path d="M10.63 7.66v5.94m-2.97-2.97h5.94" />
+                        <rect width="14" height="14" x="3.63" y="3.63" rx="3" />
+                        <path d="M20.63 7.63v7a6 6 0 0 1-6 6h-7" />
+                    </g>
+                </svg>
+            </button>
+            <button class="btn btn-primary" id="clear-btn">Clear</button>
+            <button class="btn btn-primary" id="save-prompts-btn" style="visibility: hidden;">Save</button>
+            <button class="btn" id="api-key-btn" title="Manage API Key">🔑</button>
+        </div>
+
+        <!-- 
+        <div class="user-actions">
+            <span class="material-icons">settings</span>
+            <div class="user-avatar">U</div>
+        </div>
+-->
+    </header>
+
+    <div class="main-content">
+        <!-- Left Panel -->
+        <div class="left-panel">
+            <!-- Concept Tab -->
+            <div class="input-section flex-grow tab-content" id="concept-tab">
+                <label>Concept Analysis</label>
+                <div id="concept-field" class="input-field large content-display"></div>
+            </div>
+
+            <!-- Summary Tab -->
+            <div class="input-section flex-grow tab-content active" id="summary-tab">
+                <label>Summary</label>
+                <div id="summary-field" class="input-field large content-display"></div>
+            </div>
+
+            <!-- Questions Tab -->
+            <div class="input-section flex-grow tab-content" id="questions-tab">
+                <div id="questions-container"></div>
+            </div>
+
+            <!-- Visual Map Tab -->
+            <div class="input-section flex-grow tab-content" id="visualmap-tab">
+                <label>Visual Map</label>
+                <div id="visualmap-field" class="input-field large content-display"></div>
+            </div>
+
+            <!-- Prompts Tab -->
+            <div class="input-section flex-grow tab-content" id="prompts-tab">
+                <div class="panel-header">
+                    <label>Edit Prompts</label>
+                    <select id="prompt-selector" class="btn" style="width: 100%; text-align: left;">
+                        <option value="concept">Concept Analysis Prompt</option>
+                        <option value="summary">Summary Prompt</option>
+                        <option value="questions">Questions Prompt</option>
+                        <option value="visualmap">Visual Map Prompt</option>
+                    </select>
+                </div>
+                <textarea id="prompt-editor" class="input-field large" placeholder="Select a prompt to edit..."
+                    style="font-family: 'JetBrains Mono', monospace; font-size: 13px; flex: 1;"></textarea>
+            </div>
+        </div>
+
+        <!-- Right Panel -->
+        <div class="right-panel">
+            <div class="code-header">
+                <label>Document Content</label>
+                <select id="model-selector" class="btn" style="width: 100%; text-align: left;">
+                    <option>Loading models...</option>
+                </select>
+            </div>
+            <div class="code-editor" tabindex="0"></div>
+        </div>
+    </div>
+    </div>
+
+    <footer>
+        <div class="footer-actions"></div>
+        <!-- Hidden markdown file input -->
+        <input type="file" id="markdown-file-input" accept=".md,.txt" style="display:none;" />
+    </footer>
+
+    <!-- Script to handle markdown upload -->
+    <script>
+        // Reference UI elements
+        const submitBtn = document.getElementById('submit-btn');
+        const markdownInput = document.getElementById('markdown-file-input');
+        const codeEditor = document.querySelector('.code-editor');
+
+        // Trigger file picker when the primary button is clicked
+        submitBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            markdownInput.click();
+        });
+
+        // Groq API configuration
+        const GROQ_API_URL = 'https://api.groq.com/openai/v1/chat/completions';
+        const GROQ_MODELS_URL = 'https://api.groq.com/openai/v1/models';
+        const GROQ_API_KEY_STORAGE = 'groq_api_key_encrypted';
+        let GROQ_MODEL = 'openai/gpt-oss-20b'; // Changed to let for dynamic updates
+        let availableModels = []; // Cache of fetched models
+
+        // API Key Management
+        function getStoredApiKey() {
+            const stored = localStorage.getItem(GROQ_API_KEY_STORAGE);
+            if (stored) {
+                try {
+                    // Simple obfuscation (not true encryption, but better than plain text)
+                    return atob(stored);
+                } catch (e) {
+                    console.error('Failed to decode API key');
+                    return null;
+                }
+            }
+            return null;
+        }
+
+        function storeApiKey(apiKey) {
+            // Simple obfuscation using base64
+            const encoded = btoa(apiKey);
+            localStorage.setItem(GROQ_API_KEY_STORAGE, encoded);
+        }
+
+        function clearApiKey() {
+            localStorage.removeItem(GROQ_API_KEY_STORAGE);
+        }
+
+        function promptForApiKey() {
+            const apiKey = prompt(
+                'Please enter your Groq API key:\n\n' +
+                'Your key will be stored securely in your browser.\n' +
+                'Get your API key from: https://console.groq.com/keys'
+            );
+
+            if (apiKey && apiKey.trim()) {
+                storeApiKey(apiKey.trim());
+                return apiKey.trim();
+            }
+            return null;
+        }
+
+        function getApiKey() {
+            let apiKey = getStoredApiKey();
+            if (!apiKey) {
+                apiKey = promptForApiKey();
+            }
+            return apiKey;
+        }
+
+        // Generic Groq call helper
+        async function callGroqAPI(prompt, systemPrompt = '', temperature = 0.7, maxTokens = 1500) {
+            const apiKey = getApiKey();
+            if (!apiKey) {
+                throw new Error('API key is required. Please provide a valid Groq API key.');
+            }
+
+            try {
+                console.log('Calling Groq API with model:', GROQ_MODEL);
+                const response = await fetch(GROQ_API_URL, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        model: GROQ_MODEL,
+                        messages: [
+                            ...(systemPrompt ? [{ role: 'system', content: systemPrompt }] : []),
+                            { role: 'user', content: prompt }
+                        ],
+                        temperature: temperature,
+                        max_tokens: maxTokens
+                    })
+                });
+
+                if (!response.ok) {
+                    let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    try {
+                        const errorData = await response.json();
+                        errorMessage = errorData.error?.message || errorMessage;
+                        console.error('API Error Details:', errorData);
+
+                        // If unauthorized, clear stored key and prompt for new one
+                        if (response.status === 401) {
+                            clearApiKey();
+                            errorMessage += '\n\nYour API key appears to be invalid. Please refresh the page and enter a valid key.';
+                        }
+                    } catch (parseErr) {
+                        console.error('Could not parse error response');
+                    }
+                    throw new Error(errorMessage);
+                }
+
+                const data = await response.json();
+                if (!data.choices || !data.choices[0] || !data.choices[0].message) {
+                    throw new Error('Invalid API response structure');
+                }
+                return data.choices[0].message.content;
+            } catch (error) {
+                console.error('Error calling Groq API:', error);
+                throw error;
+            }
+        }
+
+        // Fetch available models from Groq API
+        async function fetchGroqModels() {
+            const apiKey = getApiKey();
+            if (!apiKey) {
+                console.warn('[Model Selector] No API key available');
+                return [];
+            }
+
+            try {
+                console.log('[Model Selector] Fetching available models...');
+                const response = await fetch(GROQ_MODELS_URL, {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${apiKey}`,
+                        'Content-Type': 'application/json'
+                    }
+                });
+
+                if (!response.ok) {
+                    let errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    try {
+                        const errorData = await response.json();
+                        errorMessage = errorData.error?.message || errorMessage;
+                        console.error('[Model Selector] API Error:', errorData);
+                    } catch (parseErr) {
+                        console.error('[Model Selector] Could not parse error response');
+                    }
+                    throw new Error(errorMessage);
+                }
+
+                const data = await response.json();
+
+                // Validate response structure
+                if (!data.data || !Array.isArray(data.data)) {
+                    console.warn('[Model Selector] Unexpected response structure:', data);
+                    throw new Error('Invalid API response structure');
+                }
+
+                // Extract model IDs from the response
+                const modelIds = data.data.map(model => model.id).filter(id => id);
+                console.log('[Model Selector] Fetched models:', modelIds.length);
+                return modelIds;
+
+            } catch (error) {
+                console.error('[Model Selector] Error fetching models:', error.message);
+                console.warn('[Model Selector] Falling back to default model');
+                return []; // Return empty array to trigger fallback
+            }
+        }
+
+        // Populate the model dropdown with fetched models
+        function populateModelDropdown(models) {
+            const dropdown = document.getElementById('model-selector');
+            if (!dropdown) {
+                console.error('[Model Selector] Dropdown element not found');
+                return;
+            }
+
+            // Clear existing options
+            dropdown.innerHTML = '';
+
+            // If no models provided, use default with indicator
+            if (!models || models.length === 0) {
+                const option = document.createElement('option');
+                option.value = GROQ_MODEL;
+                option.textContent = `${GROQ_MODEL} (default)`;
+                dropdown.appendChild(option);
+                console.log('[Model Selector] Using default model only');
+                return;
+            }
+
+            // Sort models alphabetically
+            const sortedModels = [...models].sort();
+
+            // Create option elements for each model
+            sortedModels.forEach(modelId => {
+                const option = document.createElement('option');
+                option.value = modelId;
+                option.textContent = modelId;
+                dropdown.appendChild(option);
+            });
+
+            console.log('[Model Selector] Populated dropdown with', sortedModels.length, 'models');
+
+            // Restore previously selected model from localStorage
+            const savedModel = localStorage.getItem('selectedGroqModel');
+            if (savedModel && sortedModels.includes(savedModel)) {
+                dropdown.value = savedModel;
+                GROQ_MODEL = savedModel;
+                console.log('[Model Selector] Restored saved model:', savedModel);
+            } else if (savedModel) {
+                // Saved model no longer available, clear it
+                localStorage.removeItem('selectedGroqModel');
+                console.warn('[Model Selector] Saved model no longer available:', savedModel);
+            }
+        }
+
+        // Handle model selection change
+        function handleModelChange(event) {
+            const selectedModel = event.target.value;
+
+            // Update global GROQ_MODEL variable
+            GROQ_MODEL = selectedModel;
+
+            // Save selection to localStorage
+            localStorage.setItem('selectedGroqModel', selectedModel);
+
+            // Log model change for debugging
+            console.log('[Model Selector] Model changed to:', selectedModel);
+        }
+
+        // Attach event listener to model dropdown
+        function attachModelChangeListener() {
+            const dropdown = document.getElementById('model-selector');
+            if (dropdown) {
+                dropdown.addEventListener('change', handleModelChange);
+                console.log('[Model Selector] Event listener attached');
+            } else {
+                console.error('[Model Selector] Could not attach listener - dropdown not found');
+            }
+        }
+
+        // Copy button functionality
+        const copyBtn = document.getElementById('copy-btn');
+
+        copyBtn.addEventListener('click', async () => {
+            // Find the currently active tab
+            const activeTab = document.querySelector('.tab-content.active');
+            if (!activeTab) {
+                alert('No active tab found.');
+                return;
+            }
+
+            let textToCopy = '';
+
+            // Check if it's the prompts tab
+            if (activeTab.id === 'prompts-tab') {
+                const promptEditor = document.getElementById('prompt-editor');
+                textToCopy = promptEditor.value.trim();
+            } else {
+                // Get the content display element from other tabs
+                const contentDisplay = activeTab.querySelector('.content-display');
+                if (!contentDisplay) {
+                    alert('No content to copy.');
+                    return;
+                }
+                textToCopy = contentDisplay.textContent.trim();
+            }
+
+            if (!textToCopy) {
+                alert('No content to copy. Please generate content first.');
+                return;
+            }
+
+            try {
+                await navigator.clipboard.writeText(textToCopy);
+
+                // Visual feedback - only change border color to green
+                copyBtn.style.borderColor = '#10b981';
+
+                setTimeout(() => {
+                    copyBtn.style.borderColor = '';
+                }, 500);
+
+                console.log('Content copied to clipboard');
+            } catch (err) {
+                console.error('Failed to copy:', err);
+                alert('Failed to copy content to clipboard.');
+            }
+        });
+
+        // Initialize the model selector
+        async function initializeModelSelector() {
+            try {
+                console.log('[Model Selector] Initializing...');
+
+                // Set dropdown to loading state
+                const dropdown = document.getElementById('model-selector');
+                if (dropdown) {
+                    dropdown.innerHTML = '<option>Loading models...</option>';
+                    dropdown.disabled = true;
+                }
+
+                // Fetch available models
+                const models = await fetchGroqModels();
+
+                // Store in global cache
+                availableModels = models;
+
+                // Populate dropdown with fetched models
+                populateModelDropdown(models);
+
+                // Re-enable dropdown
+                if (dropdown) {
+                    dropdown.disabled = false;
+                }
+
+                // Attach change event listener
+                attachModelChangeListener();
+
+                console.log('[Model Selector] Initialization complete');
+            } catch (error) {
+                console.error('[Model Selector] Initialization error:', error);
+                // Ensure application continues functioning
+                const dropdown = document.getElementById('model-selector');
+                if (dropdown) {
+                    dropdown.disabled = false;
+                }
+                // Populate with default model as fallback
+                populateModelDropdown([]);
+                attachModelChangeListener();
+            }
+        }
+
+        async function processMarkdownWithGroq(text) {
+            const systemPrompt = 'You are an assistant that extracts a well-structured outline from markdown.';
+            const userPrompt = `Return a JSON array where each element has:\n- title (string)\n- summary (string)\nfor every top-level heading in the following markdown.\nMarkdown:\n"""\n${text}\n"""`;
+            try {
+                const result = await callGroqAPI(userPrompt, systemPrompt, 0.3, 1000);
+                console.log('Groq outline:', result);
+                // In a later task we could parse and display; for now just log.
+            } catch (err) {
+                console.error('Failed to process markdown with Groq:', err);
+            }
+        }
+
+        // Handle file selection and parse markdown content
+        markdownInput.addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            try {
+                const text = await file.text();
+                const sections = parseMarkdown(text);
+                console.log('Parsed sections:', sections);
+                // Display formatted markdown with image references in blue
+                codeEditor.innerHTML = formatMarkdownForDisplay(text);
+                // Send to Groq for deeper parsing
+                processMarkdownWithGroq(text);
+
+                // Visual feedback - turn Load button border green
+                submitBtn.style.borderColor = '#10b981';
+                setTimeout(() => {
+                    submitBtn.style.borderColor = '';
+                }, 1500);
+            } catch (err) {
+                console.error('Failed to read file:', err);
+                codeEditor.textContent = `Error loading file: ${err.message}`;
+            }
+        });
+
+        // Format markdown for display with image references in blue
+        function formatMarkdownForDisplay(text) {
+            // Escape HTML to prevent injection
+            let formatted = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Highlight text in square brackets (image references) in blue
+            formatted = formatted.replace(/(\[[^\]]+\])/g, '<span style="color: #2563eb; font-style: italic;">$1</span>');
+
+            return formatted;
+        }
+
+        // Basic markdown parser (headers only) – adapted from failed.html
+        function parseMarkdown(text) {
+            const sections = [];
+            const lines = text.split('\n');
+            let currentSection = null;
+            let sectionContent = [];
+
+            lines.forEach((line, index) => {
+                const trimmedLine = line.trim();
+                if (!trimmedLine) return;
+
+                const headerMatch = trimmedLine.match(/^(#{1,6})\s+(.+)/);
+                if (headerMatch) {
+                    if (currentSection) {
+                        currentSection.content = sectionContent.join('\n').trim();
+                        sections.push(currentSection);
+                    }
+                    currentSection = {
+                        title: headerMatch[2],
+                        level: headerMatch[1].length,
+                        line: index,
+                    };
+                    sectionContent = [];
+                    return;
+                }
+
+                if (currentSection) sectionContent.push(line);
+            });
+
+            if (currentSection) {
+                currentSection.content = sectionContent.join('\n').trim();
+                sections.push(currentSection);
+            }
+
+            return sections;
+        }
+
+        // Tab management
+        const conceptField = document.getElementById('concept-field');
+        const summaryField = document.getElementById('summary-field');
+        const visualmapField = document.getElementById('visualmap-field');
+
+        const conceptTab = document.getElementById('concept-tab');
+        const summaryTab = document.getElementById('summary-tab');
+        const questionsTab = document.getElementById('questions-tab');
+        const visualmapTab = document.getElementById('visualmap-tab');
+        const promptsTab = document.getElementById('prompts-tab');
+
+        // Navigation buttons
+        const summaryBtn = document.getElementById('summary-btn');
+        const conceptBtn = document.getElementById('concept-btn');
+        const questionsBtn = document.getElementById('questions-btn');
+        const visualmapBtn = document.getElementById('visualmap-btn');
+        const promptsBtn = document.getElementById('prompts-btn');
+
+        // Quiz State Manager
+        let quizState = {
+            quizData: null,
+            currentQuestionIndex: 0,
+            userAnswers: [],
+            quizStatus: 'not_started', // 'not_started' | 'in_progress' | 'completed'
+            showingFeedback: false
+        };
+
+        // Quiz State Management Functions
+        function initializeQuiz(quizData) {
+            quizState.quizData = quizData;
+            quizState.currentQuestionIndex = 0;
+            quizState.userAnswers = [];
+            quizState.quizStatus = 'in_progress';
+            quizState.showingFeedback = false;
+            console.log('Quiz initialized with', quizData.questions.length, 'questions');
+        }
+
+        function getCurrentQuestion() {
+            if (!quizState.quizData || quizState.currentQuestionIndex >= quizState.quizData.questions.length) {
+                return null;
+            }
+            return quizState.quizData.questions[quizState.currentQuestionIndex];
+        }
+
+        function submitAnswer(selectedIndex) {
+            const currentQuestion = getCurrentQuestion();
+            if (!currentQuestion) return null;
+
+            // Prevent double-submission
+            if (quizState.showingFeedback) {
+                console.warn('Answer already submitted for this question');
+                return null;
+            }
+
+            const isCorrect = selectedIndex === currentQuestion.correctIndex;
+            const answerRecord = {
+                questionId: currentQuestion.id,
+                selectedIndex: selectedIndex,
+                isCorrect: isCorrect
+            };
+
+            quizState.userAnswers.push(answerRecord);
+            quizState.showingFeedback = true;
+
+            console.log('Answer submitted:', answerRecord);
+            return answerRecord;
+        }
+
+        function moveToNextQuestion() {
+            quizState.currentQuestionIndex++;
+            quizState.showingFeedback = false;
+
+            if (isQuizComplete()) {
+                quizState.quizStatus = 'completed';
+                console.log('Quiz completed!');
+            }
+        }
+
+        function isQuizComplete() {
+            return quizState.currentQuestionIndex >= quizState.quizData.questions.length;
+        }
+
+        function getScore() {
+            const correct = quizState.userAnswers.filter(a => a.isCorrect).length;
+            const total = quizState.userAnswers.length;
+            const percentage = total > 0 ? Math.round((correct / total) * 100) : 0;
+
+            let performanceLevel = '';
+            if (percentage >= 90) {
+                performanceLevel = 'Excellent work! You have a strong grasp of the material.';
+            } else if (percentage >= 70) {
+                performanceLevel = 'Good job! You understand most concepts well.';
+            } else if (percentage >= 50) {
+                performanceLevel = 'Fair performance. Consider reviewing the material.';
+            } else {
+                performanceLevel = 'Needs improvement. Please review the document carefully.';
+            }
+
+            return {
+                correct: correct,
+                total: total,
+                percentage: percentage,
+                performanceLevel: performanceLevel
+            };
+        }
+
+        function resetQuiz() {
+            quizState.quizData = null;
+            quizState.currentQuestionIndex = 0;
+            quizState.userAnswers = [];
+            quizState.quizStatus = 'not_started';
+            quizState.showingFeedback = false;
+            console.log('Quiz reset');
+        }
+
+        // Quiz container reference
+        const questionsContainer = document.getElementById('questions-container');
+        console.log('Questions container initialized:', questionsContainer);
+
+        // Quiz UI Controller Functions
+        function showLoadingState() {
+            questionsContainer.innerHTML = `
+                <div style="padding: 20px;">
+                    <div class="quiz-header">QUESTIONS</div>
+                    <div class="quiz-card">
+                        <div class="quiz-loading">
+                            <div class="quiz-loading-text">Generating quiz questions...</div>
+                            <div class="quiz-loading-subtext">This may take a moment</div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderQuestion(question, index, total) {
+            if (!question) {
+                console.error('No question to render');
+                return;
+            }
+
+            questionsContainer.innerHTML = `
+                <div style="padding: 20px;">
+                    <div class="quiz-header">QUESTIONS</div>
+                    <div class="quiz-card">
+                        <div class="quiz-question-number">Question ${index + 1} of ${total}</div>
+                        <div class="quiz-question-text">${escapeHtml(question.question)}</div>
+                        <div class="quiz-options">
+                            ${question.options.map((option, idx) => `
+                                <button class="quiz-option" data-index="${idx}">
+                                    <span class="quiz-option-letter">${String.fromCharCode(65 + idx)}.</span>
+                                    <span class="quiz-option-text">${escapeHtml(option)}</span>
+                                </button>
+                            `).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            attachAnswerListeners();
+        }
+
+        function renderFeedback(isCorrect, explanation, correctAnswer) {
+            const index = quizState.currentQuestionIndex;
+            const total = quizState.quizData.questions.length;
+            const isLastQuestion = (index + 1) >= total;
+
+            questionsContainer.innerHTML = `
+                <div style="padding: 20px;">
+                    <div class="quiz-header">QUESTIONS</div>
+                    <div class="quiz-card">
+                        <div class="quiz-feedback ${isCorrect ? 'correct' : 'incorrect'}">
+                            ${isCorrect ? 'Correct!' : 'Incorrect'}
+                        </div>
+                        ${!isCorrect ? `
+                            <div class="quiz-correct-answer-box">
+                                <strong>Correct answer: ${correctAnswer}</strong>
+                            </div>
+                        ` : ''}
+                        <div class="quiz-explanation">
+                            <span class="quiz-explanation-label">Explanation:</span>
+                            ${escapeHtml(explanation)}
+                        </div>
+                        <button class="quiz-continue-btn" id="continue-btn">
+                            ${isLastQuestion ? 'View Results' : 'Continue →'}
+                        </button>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('continue-btn').addEventListener('click', handleContinue);
+        }
+
+        function renderResults(score, answers, questions) {
+            questionsContainer.innerHTML = `
+                <div style="padding: 20px;">
+                    <div class="quiz-header">QUESTIONS</div>
+                    <div class="quiz-card">
+                        <div class="quiz-results-title">Quiz Complete!</div>
+                        <div class="quiz-results-score">${score.correct}/${score.total} (${score.percentage}%)</div>
+                        <div class="quiz-results-message">${score.performanceLevel}</div>
+                        <div class="quiz-button-group">
+                            <button class="quiz-continue-btn" id="restart-btn">Restart Quiz</button>
+                            <button class="quiz-btn-secondary" id="review-btn">Review Answers</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('restart-btn').addEventListener('click', handleRestartQuiz);
+            document.getElementById('review-btn').addEventListener('click', () => {
+                renderReviewAnswers(questions, answers);
+            });
+        }
+
+        function renderReviewAnswers(questions, answers) {
+            const reviewHTML = questions.map((question, index) => {
+                const userAnswer = answers[index];
+                const isCorrect = userAnswer && userAnswer.isCorrect;
+                const correctAnswer = String.fromCharCode(65 + question.correctIndex) + '. ' + question.options[question.correctIndex];
+                const userSelectedAnswer = userAnswer ? String.fromCharCode(65 + userAnswer.selectedIndex) + '. ' + question.options[userAnswer.selectedIndex] : 'Not answered';
+
+                return `
+                    <div class="quiz-review-item">
+                        <div class="quiz-question-number">Question ${index + 1}</div>
+                        <div class="quiz-question-text">${escapeHtml(question.question)}</div>
+                        <div class="quiz-review-answer ${isCorrect ? 'correct' : 'incorrect'}">
+                            <strong>Your answer:</strong> ${escapeHtml(userSelectedAnswer)}
+                            ${!isCorrect ? `<br><strong>Correct answer:</strong> ${escapeHtml(correctAnswer)}` : ''}
+                        </div>
+                        <div class="quiz-explanation">
+                            <span class="quiz-explanation-label">Explanation:</span>
+                            ${escapeHtml(question.explanation)}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            questionsContainer.innerHTML = `
+                <div style="padding: 20px;">
+                    <div class="quiz-header">ANSWER REVIEW</div>
+                    <div class="quiz-card">
+                        ${reviewHTML}
+                        <div class="quiz-button-group" style="margin-top: 20px;">
+                            <button class="quiz-continue-btn" id="restart-btn-review">Restart Quiz</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            document.getElementById('restart-btn-review').addEventListener('click', handleRestartQuiz);
+        }
+
+        function clearQuizUI() {
+            questionsContainer.innerHTML = '';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function attachAnswerListeners() {
+            const options = document.querySelectorAll('.quiz-option');
+            options.forEach(option => {
+                option.addEventListener('click', function () {
+                    const selectedIndex = parseInt(this.getAttribute('data-index'));
+
+                    // Disable all options after selection
+                    options.forEach(opt => {
+                        opt.classList.add('disabled');
+                    });
+
+                    // Highlight selected option
+                    this.classList.add('selected');
+
+                    // Submit answer and show feedback
+                    handleAnswerSelection(selectedIndex);
+                });
+            });
+        }
+
+        function handleAnswerSelection(selectedIndex) {
+            const answerRecord = submitAnswer(selectedIndex);
+            if (!answerRecord) return;
+
+            const currentQuestion = quizState.quizData.questions[quizState.currentQuestionIndex];
+            const correctAnswer = String.fromCharCode(65 + currentQuestion.correctIndex) + '. ' + currentQuestion.options[currentQuestion.correctIndex];
+
+            // Show feedback after brief delay for visual feedback
+            setTimeout(() => {
+                renderFeedback(answerRecord.isCorrect, currentQuestion.explanation, correctAnswer);
+            }, 300);
+        }
+
+        function handleContinue() {
+            moveToNextQuestion();
+
+            if (isQuizComplete()) {
+                // Show results
+                const score = getScore();
+                renderResults(score, quizState.userAnswers, quizState.quizData.questions);
+            } else {
+                // Show next question
+                const nextQuestion = getCurrentQuestion();
+                renderQuestion(nextQuestion, quizState.currentQuestionIndex, quizState.quizData.questions.length);
+            }
+        }
+
+        function handleRestartQuiz() {
+            const docText = codeEditor.textContent.trim();
+            if (!docText) {
+                alert('Please load a document first.');
+                return;
+            }
+
+            resetQuiz();
+            clearQuizUI();
+            generateInteractiveQuestions(docText);
+        }
+
+        // Quiz Data Validation
+        function validateQuizData(data) {
+            if (!data || typeof data !== 'object') {
+                console.error('Invalid quiz data: not an object');
+                return false;
+            }
+
+            if (!Array.isArray(data.questions)) {
+                console.error('Invalid quiz data: questions is not an array');
+                return false;
+            }
+
+            if (data.questions.length < 1) {
+                console.error('Invalid quiz data: no questions found');
+                return false;
+            }
+
+            // Validate each question
+            for (let i = 0; i < data.questions.length; i++) {
+                const q = data.questions[i];
+
+                if (typeof q.id !== 'number') {
+                    console.error(`Question ${i}: missing or invalid id`);
+                    return false;
+                }
+
+                if (typeof q.question !== 'string' || q.question.trim() === '') {
+                    console.error(`Question ${i}: missing or invalid question text`);
+                    return false;
+                }
+
+                if (!Array.isArray(q.options) || q.options.length !== 4) {
+                    console.error(`Question ${i}: options must be an array of 4 strings`);
+                    return false;
+                }
+
+                if (typeof q.correctIndex !== 'number' || q.correctIndex < 0 || q.correctIndex > 3) {
+                    console.error(`Question ${i}: correctIndex must be a number between 0 and 3`);
+                    return false;
+                }
+
+                if (typeof q.explanation !== 'string' || q.explanation.trim() === '') {
+                    console.error(`Question ${i}: missing or invalid explanation`);
+                    return false;
+                }
+
+                if (typeof q.difficulty !== 'string' || q.difficulty.trim() === '') {
+                    console.error(`Question ${i}: missing or invalid difficulty`);
+                    return false;
+                }
+            }
+
+            console.log('Quiz data validation passed');
+            return true;
+        }
+
+        // Prompt storage - single-field with migration (v2)
+        const PROMPTS_STORAGE_KEY = 'learn.prompts.v2';
+
+        // Default prompts as a single combined string per type
+        const defaultPrompts = {
+            concept: (
+                `You are an expert learning systems architect who specializes in creating personalized educational experiences from source documents.
+
+IMPORTANT FORMATTING RULES:
+- Use plain text formatting ONLY (no markdown tables)
+- Use simple bullet points (•) and numbered lists
+- Use clear section headers with ## prefix
+- Use indentation for hierarchy
+- Keep lines under 80 characters when possible
+- Use blank lines to separate sections
+- Use simple ASCII characters for emphasis (**, *, etc.)
+
+Process the document systematically following these steps:
+
+**Step 1: Document Ingestion**
+1. Identify document structure (chapters, sections, subsections)
+2. Detect key elements: definitions, examples, exercises, summaries
+
+**Step 2: Content Analysis**
+Analyze extracted content for:
+- Core concepts and their relationships
+- Difficulty progression (foundational → advanced)
+- Prerequisites and dependencies between topics
+- Key terminology and definitions
+- Practical applications and examples
+- Common misconceptions or challenging areas
+
+Format your response as readable plain text with clear sections, bullet points, and indentation. DO NOT use markdown tables.
+
+Analyze this document and provide a comprehensive concept breakdown in plain text format (no tables):
+
+{docText}`
+            ),
+            summary: (
+                `You are a helpful assistant that summarizes documents.
+
+Summarize the following markdown document in no more than 5 paragraphs. Each paragraph should contain no more than 50 words. Write in clear, coherent prose, avoiding lists or bullet points. Exclude any code blocks from the summary. Focus on capturing the key ideas and main points from the text.
+
+Document:
+{docText}`
+            ),
+            questions: (
+                `You are an expert learning systems architect specializing in creating interactive quiz questions from educational documents.
+
+Your task is to generate a JSON array of multiple-choice questions that test understanding of the document content.
+
+CRITICAL: You MUST respond with ONLY valid JSON. No markdown, no code blocks, no explanations - just the raw JSON array.
+
+**Question Design Guidelines:**
+- Start with foundational concepts before advanced ones
+- Use varied question types:
+  - Recall: "What is X?"
+  - Application: "How would you use X in situation Y?"
+  - Analysis: "What's the relationship between X and Y?"
+  - Synthesis: "How does this concept connect to [related topic]?"
+- Each question must have exactly 4 answer options
+- Only one option should be correct
+- Provide clear explanations for why the correct answer is right
+- IMPORTANT: Randomize the position of correct answers across questions. DO NOT place the correct answer at position 0 (option A) for most questions. Distribute correct answers evenly across all positions (0, 1, 2, 3).
+
+**JSON Structure Required:**
+Return a JSON object with a "questions" array. Each question object must have:
+- id: number (0-based index)
+- question: string (the question text)
+- options: array of exactly 4 strings (the answer choices)
+- correctIndex: number (0-3, indicating which option is correct - VARY THIS across questions)
+- explanation: string (why the correct answer is right)
+- difficulty: string (one of: "Foundational", "Intermediate", "Advanced")
+
+**Example Format:**
+{
+  "questions": [
+    {
+      "id": 0,
+      "question": "What is the primary purpose of X?",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctIndex": 2,
+      "explanation": "Option C is correct because...",
+      "difficulty": "Foundational"
+    }
+  ]
+}
+
+Generate 8-10 progressive multiple-choice questions based on this document. ENSURE correct answers are distributed across different positions (not always at position 0). Return ONLY valid JSON with no markdown formatting or code blocks.
+
+Document:
+{docText}`
+            ),
+            visualmap: (
+                `You are an expert at creating visual concept maps.
+
+Create a visual concept map structure for this document:
+
+{docText}`
+            )
+        };
+
+        // Load v2 prompts and migrate legacy v1 if present
+        function loadPromptsV2() {
+            const existing = localStorage.getItem(PROMPTS_STORAGE_KEY);
+            if (existing) {
+                try {
+                    const parsed = JSON.parse(existing);
+                    if (parsed && typeof parsed === 'object') return parsed;
+                } catch (e) {
+                    console.warn('[Prompts] Failed to parse v2 store, reinitializing');
+                }
+            }
+
+            // Legacy migration from 'customPrompts' { type: { system, user } }
+            const legacyRaw = localStorage.getItem('customPrompts');
+            let migrated = {};
+            if (legacyRaw) {
+                try {
+                    const legacy = JSON.parse(legacyRaw) || {};
+                    Object.keys(legacy).forEach((k) => {
+                        const it = legacy[k];
+                        if (it && typeof it === 'object') {
+                            const sys = (it.system || '').toString();
+                            const usr = (it.user || '').toString();
+                            const combined = (sys && usr) ? (sys + '\n\n' + usr) : (sys || usr);
+                            if (combined) migrated[k] = combined;
+                        }
+                    });
+                } catch (e) {
+                    console.warn('[Prompts] Legacy customPrompts parse failed; skipping migration');
+                }
+            }
+
+            // Initialize store, prefer migrated values over defaults when present
+            const initial = { ...migrated };
+            localStorage.setItem(PROMPTS_STORAGE_KEY, JSON.stringify(initial));
+            return initial;
+        }
+
+        let promptsStore = loadPromptsV2();
+
+        function getPrompt(type) {
+            return promptsStore[type] || defaultPrompts[type] || '';
+        }
+
+        function savePrompt(type, promptString) {
+            promptsStore[type] = promptString;
+            localStorage.setItem(PROMPTS_STORAGE_KEY, JSON.stringify(promptsStore));
+        }
+
+        // Helper: ensure doc text is present even if custom prompt lacks {docText}
+        function buildPromptWithDoc(type, docText) {
+            const base = (getPrompt(type) || '').toString();
+            let result = base.replace('{docText}', docText);
+            if (result === base || result.includes('{docText}')) {
+                const needsLabel = !/document\s*:\s*$/i.test(result.trim());
+                const separator = result.trim().length ? '\n\n' : '';
+                result = result + separator + (needsLabel ? 'Document:\n' : '') + docText;
+            }
+            return result;
+        }
+
+        // Tab switching function
+        function switchTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+
+            // Remove active class from all nav links
+            document.querySelectorAll('.nav-links a').forEach(a => a.classList.remove('active'));
+
+            // Get Save Prompts button
+            const savePromptsBtn = document.getElementById('save-prompts-btn');
+
+            // Show selected tab and activate nav link
+            switch (tabName) {
+                case 'concept':
+                    conceptTab.classList.add('active');
+                    conceptBtn.classList.add('active');
+                    if (savePromptsBtn) savePromptsBtn.style.visibility = 'hidden';
+                    break;
+                case 'summary':
+                    summaryTab.classList.add('active');
+                    summaryBtn.classList.add('active');
+                    if (savePromptsBtn) savePromptsBtn.style.visibility = 'hidden';
+                    break;
+                case 'questions':
+                    questionsTab.classList.add('active');
+                    questionsBtn.classList.add('active');
+                    if (savePromptsBtn) savePromptsBtn.style.visibility = 'hidden';
+                    break;
+                case 'visualmap':
+                    visualmapTab.classList.add('active');
+                    visualmapBtn.classList.add('active');
+                    if (savePromptsBtn) savePromptsBtn.style.visibility = 'hidden';
+                    break;
+                case 'prompts':
+                    promptsTab.classList.add('active');
+                    promptsBtn.classList.add('active');
+                    if (savePromptsBtn) savePromptsBtn.style.visibility = 'visible';
+                    break;
+            }
+        }
+
+        // Concept button logic - Phase 1 Implementation
+        conceptBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            switchTab('concept');
+
+            const docText = codeEditor.textContent.trim();
+            if (!docText) {
+                alert('Please load a document first.');
+                return;
+            }
+
+            // Only generate if field is empty
+            if (!conceptField.textContent.trim()) {
+                await analyzeDocumentConcepts(docText);
+            }
+        });
+
+        async function analyzeDocumentConcepts(docText) {
+            const prompt = buildPromptWithDoc('concept', docText);
+
+            try {
+                conceptField.textContent = 'Analyzing document concepts...';
+                console.log('Starting concept analysis...');
+                console.log('Document length:', docText.length);
+
+                const analysis = await callGroqAPI(prompt, '', 0.5, 2000);
+                console.log('Analysis received, length:', analysis.length);
+                setFormattedContent(conceptField, analysis);
+            } catch (err) {
+                console.error('Failed to analyze concepts - Full error:', err);
+                console.error('Error message:', err.message);
+                conceptField.textContent = `Error: ${err.message}\n\nPlease try again or check console for details.`;
+            }
+        }
+
+        // Questions button logic
+        questionsBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            console.log('Questions button clicked');
+            switchTab('questions');
+
+            const docText = codeEditor.textContent.trim();
+            console.log('Document text length:', docText.length);
+
+            if (!docText) {
+                alert('Please load a document first.');
+                return;
+            }
+
+            console.log('Questions container:', questionsContainer);
+            console.log('Quiz status:', quizState.quizStatus);
+            console.log('Container innerHTML:', questionsContainer.innerHTML.trim());
+
+            // Only generate if container is empty or quiz not started
+            if (!questionsContainer.innerHTML.trim() || quizState.quizStatus === 'not_started') {
+                console.log('Generating questions...');
+                await generateInteractiveQuestions(docText);
+            } else {
+                console.log('Quiz already generated, not regenerating');
+            }
+        });
+
+        async function generateInteractiveQuestions(docText) {
+            const prompt = buildPromptWithDoc('questions', docText);
+
+            try {
+                showLoadingState();
+                console.log('Starting quiz generation...');
+
+                const response = await callGroqAPI(prompt, '', 0.7, 3000);
+                console.log('Raw API response:', response);
+
+                // Parse JSON response
+                let quizData;
+                try {
+                    // Clean response - remove markdown code blocks if present
+                    let cleanedResponse = response.trim();
+                    if (cleanedResponse.startsWith('```json')) {
+                        cleanedResponse = cleanedResponse.replace(/^```json\s*/, '').replace(/```\s*$/, '');
+                    } else if (cleanedResponse.startsWith('```')) {
+                        cleanedResponse = cleanedResponse.replace(/^```\s*/, '').replace(/```\s*$/, '');
+                    }
+
+                    quizData = JSON.parse(cleanedResponse);
+                    console.log('Parsed quiz data:', quizData);
+                } catch (parseErr) {
+                    console.error('JSON parsing error:', parseErr);
+                    console.error('Raw response:', response);
+                    throw new Error('Failed to parse quiz data. The response was not valid JSON.');
+                }
+
+                // Validate quiz data
+                if (!validateQuizData(quizData)) {
+                    throw new Error('Quiz data validation failed. Please try again.');
+                }
+
+                // Initialize quiz and render first question
+                initializeQuiz(quizData);
+                renderQuestion(getCurrentQuestion(), 0, quizData.questions.length);
+
+            } catch (err) {
+                console.error('Failed to generate quiz - Full error:', err);
+                alert(`Error generating quiz: ${err.message}\n\nCheck the console for details.`);
+                clearQuizUI();
+            }
+        }
+
+        // Summary button logic
+        summaryBtn.addEventListener('click', async (e) => {
+            e.preventDefault();
+            switchTab('summary');
+
+            const docText = codeEditor.textContent.trim();
+            if (!docText) {
+                alert('Please load a document first.');
+                return;
+            }
+
+            // Only generate if field is empty
+            if (!summaryField.textContent.trim()) {
+                const originalLabel = summaryBtn.textContent;
+                summaryBtn.textContent = 'Summarizing…';
+                summaryBtn.style.pointerEvents = 'none';
+
+                try {
+                    const prompt = buildPromptWithDoc('summary', docText);
+                    console.log('[Summary] Prompt length:', prompt.length);
+                    console.log('[Summary] Prompt preview:', prompt.slice(0, 200));
+                    const summary = await callGroqAPI(prompt, '');
+                    setFormattedContent(summaryField, summary);
+                } catch (err) {
+                    console.error('Summary generation failed:', err);
+                    alert('Failed to generate summary. Check console for details.');
+                } finally {
+                    summaryBtn.textContent = originalLabel;
+                    summaryBtn.style.pointerEvents = 'auto';
+                }
+            }
+        });
+
+
+
+        // Visual Map button logic
+        visualmapBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            switchTab('visualmap');
+
+            const docText = codeEditor.textContent.trim();
+            if (!docText) {
+                alert('Please load a document first.');
+                return;
+            }
+
+            if (!visualmapField.textContent.trim()) {
+                visualmapField.textContent = 'Visual Map feature coming soon...';
+            }
+        });
+
+        // Prompts tab logic
+        const promptSelector = document.getElementById('prompt-selector');
+        const promptEditor = document.getElementById('prompt-editor');
+
+        promptsBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            switchTab('prompts');
+            loadPromptIntoEditor(promptSelector.value);
+        });
+
+        promptSelector.addEventListener('change', (e) => {
+            loadPromptIntoEditor(e.target.value);
+        });
+
+        function loadPromptIntoEditor(type) {
+            const prompt = getPrompt(type);
+            promptEditor.value = prompt || '';
+        }
+
+        // Clear button logic - clears current active tab
+        const clearBtn = document.getElementById('clear-btn');
+        clearBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const activeTab = document.querySelector('.tab-content.active');
+            if (activeTab) {
+                // Check if it's the prompts tab
+                if (activeTab.id === 'prompts-tab') {
+                    const promptEditor = document.getElementById('prompt-editor');
+                    if (promptEditor) promptEditor.value = '';
+                } else if (activeTab.id === 'questions-tab') {
+                    // Reset quiz state and clear UI
+                    resetQuiz();
+                    clearQuizUI();
+                } else {
+                    const contentField = activeTab.querySelector('.content-display');
+                    if (contentField) contentField.textContent = '';
+                }
+
+                // Visual feedback - turn Clear button border green
+                clearBtn.style.borderColor = '#10b981';
+                setTimeout(() => {
+                    clearBtn.style.borderColor = '';
+                }, 1500);
+            }
+        });
+
+        // Save Prompts button logic - saves current prompt (single-field) to localStorage
+        const savePromptsBtn = document.getElementById('save-prompts-btn');
+        savePromptsBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+
+            const promptEditor = document.getElementById('prompt-editor');
+            const promptSelector = document.getElementById('prompt-selector');
+            const selectedPromptType = promptSelector.value;
+            let promptText = promptEditor.value.trim();
+
+            if (!promptText) {
+                alert('Please enter a prompt before saving.');
+                return;
+            }
+
+            // Ensure summary prompt includes {docText} placeholder
+            if (selectedPromptType === 'summary' && !/\{docText\}/.test(promptText)) {
+                const needsLabel = !/document\s*:\s*$/i.test(promptText.trim());
+                const separator = promptText.trim().length ? '\n\n' : '';
+                promptText = promptText + separator + (needsLabel ? 'Document:\n' : '') + '{docText}';
+            }
+
+            // Save single combined prompt
+            savePrompt(selectedPromptType, promptText);
+
+            // Visual feedback - only change border color to green, keep label unchanged
+            savePromptsBtn.style.borderColor = '#10b981';
+
+            setTimeout(() => {
+                savePromptsBtn.style.borderColor = '';
+            }, 1500);
+
+            console.log(`Saved ${selectedPromptType} prompt to localStorage (v2)`);
+        });
+
+        // Ensure content fields are empty on page load
+        conceptField.textContent = '';
+        summaryField.textContent = '';
+        visualmapField.textContent = '';
+
+        // Format text with markdown-style highlighting
+        function formatText(text) {
+            if (!text) return '';
+
+            // Escape HTML first
+            let formatted = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+
+            // Format image references [Image: ...] or [anything in brackets]
+            formatted = formatted.replace(/\[([^\]]+)\]/g, '<span class="image-ref">[$1]</span>');
+
+            // Format headings (## text)
+            formatted = formatted.replace(/^##\s+(.+)$/gm, '<span class="heading">$1</span>');
+
+            // Format bold/strong (**text**)
+            formatted = formatted.replace(/\*\*([^*]+)\*\*/g, '<span class="strong">$1</span>');
+
+            // Format emphasis (*text*)
+            formatted = formatted.replace(/\*([^*]+)\*/g, '<span class="emphasis">$1</span>');
+
+            // Format bullet points (• or - or *) - replace with colored bullet
+            formatted = formatted.replace(/^[•\-\*]\s+/gm, '<span class="bullet">●</span> ');
+
+            // Format section dividers (---)
+            formatted = formatted.replace(/^---+$/gm, '<span class="section-divider">───────────────────────────────────────</span>');
+
+            return formatted;
+        }
+
+        // Set formatted content
+        function setFormattedContent(element, text) {
+            element.innerHTML = formatText(text);
+        }
+
+        // API Key button functionality
+        const apiKeyBtn = document.getElementById('api-key-btn');
+        apiKeyBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const currentKey = getStoredApiKey();
+            const message = currentKey
+                ? 'API Key is currently set.\n\nChoose an action:'
+                : 'No API Key is currently set.\n\nWould you like to set one?';
+
+            if (currentKey) {
+                const action = confirm(message + '\n\nOK = Change Key\nCancel = Clear Key');
+                if (action) {
+                    // Change key
+                    clearApiKey();
+                    const newKey = promptForApiKey();
+                    if (newKey) {
+                        alert('API Key updated successfully!');
+                        // Refresh models with new key
+                        initializeModelSelector();
+                    }
+                } else {
+                    // Clear key
+                    if (confirm('Are you sure you want to clear your API key?')) {
+                        clearApiKey();
+                        alert('API Key cleared. You will be prompted for a new key when needed.');
+                    }
+                }
+            } else {
+                const newKey = promptForApiKey();
+                if (newKey) {
+                    alert('API Key saved successfully!');
+                    // Refresh models with new key
+                    initializeModelSelector();
+                }
+            }
+        });
+
+        // Initialize model selector when DOM is ready
+        document.addEventListener('DOMContentLoaded', initializeModelSelector);
+    </script>
+</body>
+
+</html>
